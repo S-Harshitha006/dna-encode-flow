@@ -165,11 +165,18 @@ function calculateSimpleChecksum(sequence: string): string {
     }
   }
   
-  // Convert counts to binary and then to DNA
+  // Convert counts to binary and then to DNA (without recursion)
   const binary = (counts.A % 4).toString(2).padStart(2, '0') + 
                  (counts.T % 4).toString(2).padStart(2, '0');
   
-  return binaryToDNA(binary);
+  // Direct conversion without calling binaryToDNA to avoid recursion
+  let checksum = '';
+  for (let i = 0; i < binary.length; i += 2) {
+    const pair = binary.substr(i, 2);
+    checksum += BINARY_TO_DNA[pair];
+  }
+  
+  return checksum;
 }
 
 /**
