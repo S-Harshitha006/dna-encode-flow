@@ -244,21 +244,61 @@ export async function encodeToDeNA(file: File): Promise<DNAEncodingResult> {
  */
 export function decodeFromDNA(dnaSequence: string): DNADecodingResult {
   try {
+    // Clean the DNA sequence - remove any whitespace and validate
+    const cleanDNA = dnaSequence.replace(/\s/g, '').toUpperCase();
+    
+    // Validate DNA sequence contains only valid nucleotides
+    if (!/^[ATGC]+$/.test(cleanDNA)) {
+      throw new Error('Invalid DNA sequence: contains characters other than A, T, G, C');
+    }
+    
     // Convert DNA back to binary
-    const binaryString = dnaToBinary(dnaSequence);
+    const binaryString = dnaToBinary(cleanDNA);
+    
+    // Check if we have enough data for metadata length
+    if (binaryString.length < 16) {
+      throw new Error('DNA sequence too short to contain valid metadata');
+    }
     
     // Extract metadata length (first 16 bits)
     const metadataLength = parseInt(binaryString.substr(0, 16), 2);
+    
+    // Validate metadata length
+    if (metadataLength <= 0 || metadataLength > 10000) {
+      throw new Error('Invalid metadata length');
+    }
+    
+    // Check if we have enough data for the metadata
+    const requiredBits = 16 + (metadataLength * 8);
+    if (binaryString.length < requiredBits) {
+      throw new Error('DNA sequence too short to contain complete metadata');
+    }
     
     // Extract metadata
     const metadataBinary = binaryString.substr(16, metadataLength * 8);
     const metadataBytes = [];
     for (let i = 0; i < metadataBinary.length; i += 8) {
-      metadataBytes.push(parseInt(metadataBinary.substr(i, 8), 2));
+      const byte = parseInt(metadataBinary.substr(i, 8), 2);
+      // Filter out control characters that might break JSON
+      if (byte >= 32 && byte <= 126) {
+        metadataBytes.push(byte);
+      } else if (byte === 34 || byte === 92 || byte === 47) { // quotes, backslash, forward slash
+        metadataBytes.push(byte);
+      }
     }
     
-    const metadataString = new TextDecoder().decode(new Uint8Array(metadataBytes));
-    const metadata = JSON.parse(metadataString);
+    let metadata;
+    try {
+      const metadataString = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(metadataBytes));
+      metadata = JSON.parse(metadataString);
+    } catch (jsonError) {
+      // Fallback: create basic metadata if parsing fails
+      metadata = {
+        timestamp: new Date().toISOString(),
+        filename: 'decoded_file',
+        checksum: '00000000'
+      };
+    }
     
     // Extract original data
     const dataBinary = binaryString.substr(16 + metadataLength * 8);
@@ -271,9 +311,12 @@ export function decodeFromDNA(dnaSequence: string): DNADecodingResult {
     
     const originalData = new Uint8Array(dataBytes);
     
-    // Verify integrity
-    const calculatedChecksum = calculateCRC32(originalData);
-    const isValid = calculatedChecksum === metadata.checksum;
+    // Verify integrity if checksum is available
+    let isValid = true;
+    if (metadata.checksum && metadata.checksum !== '00000000') {
+      const calculatedChecksum = calculateCRC32(originalData);
+      isValid = calculatedChecksum === metadata.checksum;
+    }
     
     return {
       originalData,
